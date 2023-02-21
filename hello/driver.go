@@ -100,6 +100,8 @@ var (
 		),
 		// password that the plugin will use to authenticate. This should optionally be set from
 		// environment variables
+		"default_groups": hclspec.NewAttr("default_groups", "[]string", false),
+		// if specified, will assign these groups permissions in boundary
 	})
 
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
@@ -169,6 +171,11 @@ var (
 			"http_request_body": hclspec.NewAttr("http_request_body", "string", false),
 			// The body of the HTTP request the library sends to Vault when requesting credentials.
 			// Only valid if http_method is set to POST
+			"disable_default_group": hclspec.NewDefault(
+				hclspec.NewAttr("disable_default_group", "bool", false),
+				hclspec.NewLiteral("false"),
+			),
+			// this is an override that prevents default groups from being assigned permissions to this job
 		}),
 	})
 
