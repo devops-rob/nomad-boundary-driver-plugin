@@ -1,4 +1,4 @@
-package hello
+package boundary
 
 import (
 	"context"
@@ -24,7 +24,7 @@ const (
 	// pluginName is the name of the plugin
 	// this is used for logging and (along with the version) for uniquely
 	// identifying plugin binaries fingerprinted by the client
-	pluginName = "hello-world-example"
+	pluginName = "boundary-driver-plugin"
 
 	// pluginVersion allows the client to identify and use newer versions of
 	// an installed plugin
@@ -50,37 +50,59 @@ var (
 		Name:              pluginName,
 	}
 
-	// configSpec is the specification of the plugin's configuration
-	// this is used to validate the configuration specified for the plugin
-	// on the client.
-	// this is not global, but can be specified on a per-client basis.
 	configSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 		// TODO: define plugin's agent configuration schema.
 		//
-		// The schema should be defined using HCL specs and it will be used to
-		// validate the agent configuration provided by the user in the
-		// `plugin` stanza (https://www.nomadproject.io/docs/configuration/plugin.html).
+		//  Example schema
 		//
-		// For example, for the schema below a valid configuration would be:
-		//
-		//   plugin "hello-driver-plugin" {
-		//     config {
-		//       shell = "fish"
-		//     }
-		//   }
-		"shell": hclspec.NewDefault(
-			hclspec.NewAttr("shell", "string", false),
-			hclspec.NewLiteral(`"bash"`),
+		//	plugin "boundary-driver-plugin" {
+		//		config {
+		//			enabled        = true
+		//			boundary_addr  = "http://127.0.0.1:9200"
+		//			auth_method_id = "ampw_1234567890"
+		//			org_id         = "o_1234567890"
+		//			username       = "admin"
+		//			password       = "password"
+		//		}
+		//	}
+		"enabled": hclspec.NewDefault(
+			hclspec.NewAttr("enabled", "bool", false),
+			hclspec.NewLiteral("true"),
 		),
+		// enables / disables the plugin
+		"boundary_addr": hclspec.NewDefault(
+			hclspec.NewAttr("boundary_addr", "string", false),
+			hclspec.NewLiteral(`"http://127.0.0.1:9200"`),
+		),
+		// address of the Boundary controller. This should optionally be set from
+		// environment variables
+		"auth_method_id": hclspec.NewDefault(
+			hclspec.NewAttr("auth_method_id", "string", false),
+			hclspec.NewLiteral("ampw_1234567890"),
+		),
+		// auth method id to use for authentication. This should optionally be set from
+		// environment variables
+		"org_id": hclspec.NewDefault(
+			hclspec.NewAttr("org_id", "string", false),
+			hclspec.NewLiteral("o_1234567890"),
+		),
+		// org scope ID that the plugin with authenticate to. This should optionally be set from
+		// environment variables
+		"username": hclspec.NewDefault(
+			hclspec.NewAttr("username", "string", false),
+			hclspec.NewLiteral("admin"),
+		),
+		// username for the plugin to authenticate. This should optionally be set from
+		// environment variables
+		"password": hclspec.NewDefault(
+			hclspec.NewAttr("password", "string", false),
+			hclspec.NewLiteral("password"),
+		),
+		// password that the plugin will use to authenticate. This should optionally be set from
+		// environment variables
 	})
 
-	// taskConfigSpec is the specification of the plugin's configuration for
-	// a task
-	// this is used to validated the configuration specified for the plugin
-	// when a job is submitted.
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		// TODO: define plugin's task configuration schema
-		//
 		// The schema should be defined using HCL specs and it will be used to
 		// validate the task configuration provided by the user when they
 		// submit a job.
@@ -88,18 +110,66 @@ var (
 		// For example, for the schema below a valid task would be:
 		//   job "example" {
 		//     group "example" {
-		//       task "say-hi" {
-		//         driver = "hello-driver-plugin"
+		//       task "boundary" {
+		//         driver = "boundary-driver-plugin"
 		//         config {
-		//           greeting = "Hi"
+		//           create_role 		 = true
+		//			 create_host_catalog = true
+		// 			 project_scope_id	 = "p_12345567890"
+		// 			 credential_library {
+		//			 	enabled 			= true
+		// 				credential_store_id = ""
+		//				path				= ""
 		//         }
 		//       }
 		//     }
 		//   }
-		"greeting": hclspec.NewDefault(
-			hclspec.NewAttr("greeting", "string", false),
-			hclspec.NewLiteral(`"Hello, World!"`),
+		"create_role": hclspec.NewDefault(
+			hclspec.NewAttr("create_role", "bool", false),
+			hclspec.NewLiteral("false"),
 		),
+		// If create_role is set to true, A role will be created with the same
+		// name as the job and with the following grant_strings:
+		// "id=<id>;actions=authorize-session"
+		"create_host_catalog": hclspec.NewDefault(
+			hclspec.NewAttr("create_host_catalog", "bool", false),
+			hclspec.NewLiteral("true"),
+		),
+		// If create_host_catalog is set to true, it will create a host catalog,
+		// a host set and a host, all named the same as the job. If set to false,
+		// an existing host catalog ID will need to be provided, within which
+		// a new host set and host will be created, also named the same as the job
+		"host_catalog_id": hclspec.NewAttr("host_catalog_id", "string", false),
+		// host_catalog_id must be provided if create_host_catalog is set to false
+		"project_scope_id": hclspec.NewAttr("project_scope_id", "string", true),
+		// project_scope_id is the scope where all resources related to the job are created
+		"credential_library": hclspec.NewObject(map[string]*hclspec.Spec{
+			"enabled": hclspec.NewDefault(
+				hclspec.NewAttr("enabled", "bool", false),
+				hclspec.NewLiteral("false"),
+			),
+			// If enabled is set to true, it will create a credential library for the target
+			// using the rest of the configuartion parameters below and attach to the target
+			"credential_store_id": hclspec.NewDefault(
+				hclspec.NewAttr("credential_store_id", "string", false),
+				hclspec.NewLiteral(""),
+			),
+			// credential_store_id where the credential library will be created must be supplied
+			// when enabled is set to true.
+			"path": hclspec.NewDefault(
+				hclspec.NewAttr("path", "string", false),
+				hclspec.NewLiteral(""),
+			),
+			// path in Vault to read  credentials from. Must be supplied if enabled is set to true
+			"http_method": hclspec.NewDefault(
+				hclspec.NewAttr("http_method", "string", false),
+				hclspec.NewLiteral("GET"),
+			),
+			// http_method can either be GET or POST. If not supplied, it will use GET as the default method
+			"http_request_body": hclspec.NewAttr("http_request_body", "string", false),
+			// The body of the HTTP request the library sends to Vault when requesting credentials.
+			// Only valid if http_method is set to POST
+		}),
 	})
 
 	// capabilities indicates what optional features this driver supports
