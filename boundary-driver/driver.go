@@ -101,7 +101,11 @@ var (
 		// password that the plugin will use to authenticate. This should optionally be set from
 		// environment variables
 		"default_groups": hclspec.NewAttr("default_groups", "[]string", false),
-		// if specified, will assign these groups permissions in boundary
+		// if default_groups is specified, will assign these groups permissions in boundary.
+		// Must be either name or ID
+		"default_project": hclspec.NewAttr("default_project_name", "string", false),
+		// if default_project is specified, all generated resources will be created within that scope.
+		// this can be overridden in the job file by specifying a project
 	})
 
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
@@ -141,10 +145,12 @@ var (
 		// a host set and a host, all named the same as the job. If set to false,
 		// an existing host catalog ID will need to be provided, within which
 		// a new host set and host will be created, also named the same as the job
-		"host_catalog_id": hclspec.NewAttr("host_catalog_id", "string", false),
-		// host_catalog_id must be provided if create_host_catalog is set to false
-		"project_scope_id": hclspec.NewAttr("project_scope_id", "string", true),
-		// project_scope_id is the scope where all resources related to the job are created
+		"host_catalog": hclspec.NewAttr("host_catalog_id", "string", false),
+		// host_catalog must be provided if create_host_catalog is set to false.
+		// Must be either ID or name of existing host catalog
+		"project_scope": hclspec.NewAttr("project_scope_id", "string", true),
+		// project_scope is the scope where all resources related to the job are created.
+		// this override the default_project set in the agent config
 		"credential_library": hclspec.NewObject(map[string]*hclspec.Spec{
 			"enabled": hclspec.NewDefault(
 				hclspec.NewAttr("enabled", "bool", false),
@@ -152,12 +158,12 @@ var (
 			),
 			// If enabled is set to true, it will create a credential library for the target
 			// using the rest of the configuartion parameters below and attach to the target
-			"credential_store_id": hclspec.NewDefault(
+			"credential_store": hclspec.NewDefault(
 				hclspec.NewAttr("credential_store_id", "string", false),
 				hclspec.NewLiteral(""),
 			),
 			// credential_store_id where the credential library will be created must be supplied
-			// when enabled is set to true.
+			// when enabled is set to true. Must be either ID or name of existing credential store
 			"path": hclspec.NewDefault(
 				hclspec.NewAttr("path", "string", false),
 				hclspec.NewLiteral(""),
