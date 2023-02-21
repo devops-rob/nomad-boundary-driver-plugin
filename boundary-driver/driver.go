@@ -21,23 +21,9 @@ import (
 )
 
 const (
-	// pluginName is the name of the plugin
-	// this is used for logging and (along with the version) for uniquely
-	// identifying plugin binaries fingerprinted by the client
-	pluginName = "boundary-driver-plugin"
-
-	// pluginVersion allows the client to identify and use newer versions of
-	// an installed plugin
-	pluginVersion = "v0.1.0"
-
-	// fingerprintPeriod is the interval at which the plugin will send
-	// fingerprint responses
+	pluginName        = "boundary-driver-plugin"
+	pluginVersion     = "v0.1.0"
 	fingerprintPeriod = 30 * time.Second
-
-	// taskHandleVersion is the version of task handle which this plugin sets
-	// and understands how to decode
-	// this is used to allow modification and migration of the task schema
-	// used by the plugin
 	taskHandleVersion = 1
 )
 
@@ -51,8 +37,6 @@ var (
 	}
 
 	configSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		// TODO: define plugin's agent configuration schema.
-		//
 		//  Example schema
 		//
 		//	plugin "boundary-driver-plugin" {
@@ -76,18 +60,18 @@ var (
 		),
 		// address of the Boundary controller. This should optionally be set from
 		// environment variables
-		"auth_method_id": hclspec.NewDefault(
+		"auth_method": hclspec.NewDefault(
 			hclspec.NewAttr("auth_method_id", "string", false),
 			hclspec.NewLiteral("ampw_1234567890"),
 		),
-		// auth method id to use for authentication. This should optionally be set from
-		// environment variables
-		"org_id": hclspec.NewDefault(
+		// auth method to use for authentication. This should optionally be set from
+		// environment variables. Must be either the name or ID
+		"org": hclspec.NewDefault(
 			hclspec.NewAttr("org_id", "string", false),
 			hclspec.NewLiteral("o_1234567890"),
 		),
-		// org scope ID that the plugin with authenticate to. This should optionally be set from
-		// environment variables
+		// org scope that the plugin with authenticate to. This should optionally be set from
+		// environment variables. Must be either name or ID of scope
 		"username": hclspec.NewDefault(
 			hclspec.NewAttr("username", "string", false),
 			hclspec.NewLiteral("admin"),
@@ -109,11 +93,7 @@ var (
 	})
 
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		// The schema should be defined using HCL specs and it will be used to
-		// validate the task configuration provided by the user when they
-		// submit a job.
-		//
-		// For example, for the schema below a valid task would be:
+		// For the schema below a valid task would be:
 		//   job "example" {
 		//     group "example" {
 		//       task "boundary" {
@@ -151,6 +131,11 @@ var (
 		"project_scope": hclspec.NewAttr("project_scope_id", "string", true),
 		// project_scope is the scope where all resources related to the job are created.
 		// this override the default_project set in the agent config
+		"disable_default_groups": hclspec.NewDefault(
+			hclspec.NewAttr("disable_default_groups", "bool", false),
+			hclspec.NewLiteral("false"),
+		),
+		// this is an override that prevents default groups from being assigned permissions to this job
 		"credential_library": hclspec.NewObject(map[string]*hclspec.Spec{
 			"enabled": hclspec.NewDefault(
 				hclspec.NewAttr("enabled", "bool", false),
@@ -177,19 +162,12 @@ var (
 			"http_request_body": hclspec.NewAttr("http_request_body", "string", false),
 			// The body of the HTTP request the library sends to Vault when requesting credentials.
 			// Only valid if http_method is set to POST
-			"disable_default_group": hclspec.NewDefault(
-				hclspec.NewAttr("disable_default_group", "bool", false),
-				hclspec.NewLiteral("false"),
-			),
-			// this is an override that prevents default groups from being assigned permissions to this job
 		}),
 	})
 
 	// capabilities indicates what optional features this driver supports
 	// this should be set according to the target run time.
 	capabilities = &drivers.Capabilities{
-		// TODO: set plugin's capabilities
-		//
 		// The plugin's capabilities signal Nomad which extra functionalities
 		// are supported. For a list of available options check the docs page:
 		// https://godoc.org/github.com/hashicorp/nomad/plugins/drivers#Capabilities
@@ -200,23 +178,33 @@ var (
 
 // Config contains configuration information for the plugin
 type Config struct {
-	// TODO: create decoded plugin configuration struct
-	//
-	// This struct is the decoded version of the schema defined in the
-	// configSpec variable above. It's used to convert the HCL configuration
-	// passed by the Nomad agent into Go contructs.
-	Shell string `codec:"shell"`
+	Enabled        bool     `codec:"enabled"`
+	BoundaryAddr   string   `codec:"boundary_addr"`
+	AuthMethod     string   `codec:"auth_method"`
+	Org            string   `codec:"org"`
+	Username       string   `codec:"username"`
+	Password       string   `codec:"password"`
+	DefaultGroups  []string `codec:"default_groups"`
+	DefaultProject string   `codec:"default_project"`
 }
 
 // TaskConfig contains configuration information for a task that runs with
 // this plugin
 type TaskConfig struct {
-	// TODO: create decoded plugin task configuration struct
-	//
-	// This struct is the decoded version of the schema defined in the
-	// taskConfigSpec variable above. It's used to convert the string
-	// configuration for the task into Go contructs.
-	Greeting string `codec:"greeting"`
+	CreateRole           bool         `codec:"create_role"`
+	CreateHostCatalog    bool         `codec:"create_host_catalog"`
+	HostCatalog          string       `codec:"host_catalog"`
+	ProjectScope         string       `codec:"project_scope"`
+	DisableDefaultGroups bool         `codec:"disable_default_groups"`
+	CredentialLibrary    CredsLibrary `codec:"credential_library"`
+}
+
+type CredsLibrary struct {
+	Enabled         bool   `codec:"enabled"`
+	CredentialStore string `codec:"credential_store"`
+	Path            string `codec:"path"`
+	HttpMethod      string `codec:"http_method"`
+	HttpRequestBody string `codec:"http_request_body"`
 }
 
 // TaskState is the runtime state which is encoded in the handle returned to
@@ -228,20 +216,17 @@ type TaskState struct {
 	TaskConfig     *drivers.TaskConfig
 	StartedAt      time.Time
 
-	// TODO: add any extra important values that must be persisted in order
-	// to restore a task.
-	//
-	// The plugin keeps track of its running tasks in a in-memory data
-	// structure. If the plugin crashes, this data will be lost, so Nomad
-	// will respawn a new instance of the plugin and try to restore its
-	// in-memory representation of the running tasks using the RecoverTask()
-	// method below.
-	Pid int
+	TargetIds           []string
+	RoleId              string
+	HostCatalogId       string
+	HostSetId           string
+	HostId              string
+	CredentialLibraryId string
 }
 
-// HelloDriverPlugin is an example driver plugin. When provisioned in a job,
+// BoundaryDriverPlugin is an example driver plugin. When provisioned in a job,
 // the taks will output a greet specified by the user.
-type HelloDriverPlugin struct {
+type BoundaryDriverPlugin struct {
 	// eventer is used to handle multiplexing of TaskEvents calls such that an
 	// event can be broadcast to all callers
 	eventer *eventer.Eventer
@@ -272,7 +257,7 @@ func NewPlugin(logger hclog.Logger) drivers.DriverPlugin {
 	ctx, cancel := context.WithCancel(context.Background())
 	logger = logger.Named(pluginName)
 
-	return &HelloDriverPlugin{
+	return &BoundaryDriverPlugin{
 		eventer:        eventer.NewEventer(ctx, logger),
 		config:         &Config{},
 		tasks:          newTaskStore(),
@@ -283,17 +268,17 @@ func NewPlugin(logger hclog.Logger) drivers.DriverPlugin {
 }
 
 // PluginInfo returns information describing the plugin.
-func (d *HelloDriverPlugin) PluginInfo() (*base.PluginInfoResponse, error) {
+func (d *BoundaryDriverPlugin) PluginInfo() (*base.PluginInfoResponse, error) {
 	return pluginInfo, nil
 }
 
 // ConfigSchema returns the plugin configuration schema.
-func (d *HelloDriverPlugin) ConfigSchema() (*hclspec.Spec, error) {
+func (d *BoundaryDriverPlugin) ConfigSchema() (*hclspec.Spec, error) {
 	return configSpec, nil
 }
 
 // SetConfig is called by the client to pass the configuration for the plugin.
-func (d *HelloDriverPlugin) SetConfig(cfg *base.Config) error {
+func (d *BoundaryDriverPlugin) SetConfig(cfg *base.Config) error {
 	var config Config
 	if len(cfg.PluginConfig) != 0 {
 		if err := base.MsgPackDecode(cfg.PluginConfig, &config); err != nil {
@@ -313,10 +298,10 @@ func (d *HelloDriverPlugin) SetConfig(cfg *base.Config) error {
 	//
 	// In the example below we check if the shell specified by the user is
 	// supported by the plugin.
-	shell := d.config.Shell
-	if shell != "bash" && shell != "fish" {
-		return fmt.Errorf("invalid shell %s", d.config.Shell)
-	}
+	//shell := d.config.Shell
+	//if shell != "bash" && shell != "fish" {
+	//	return fmt.Errorf("invalid shell %s", d.config.Shell)
+	//}
 
 	// Save the Nomad agent configuration
 	if cfg.AgentConfig != nil {
@@ -332,25 +317,25 @@ func (d *HelloDriverPlugin) SetConfig(cfg *base.Config) error {
 }
 
 // TaskConfigSchema returns the HCL schema for the configuration of a task.
-func (d *HelloDriverPlugin) TaskConfigSchema() (*hclspec.Spec, error) {
+func (d *BoundaryDriverPlugin) TaskConfigSchema() (*hclspec.Spec, error) {
 	return taskConfigSpec, nil
 }
 
 // Capabilities returns the features supported by the driver.
-func (d *HelloDriverPlugin) Capabilities() (*drivers.Capabilities, error) {
+func (d *BoundaryDriverPlugin) Capabilities() (*drivers.Capabilities, error) {
 	return capabilities, nil
 }
 
 // Fingerprint returns a channel that will be used to send health information
 // and other driver specific node attributes.
-func (d *HelloDriverPlugin) Fingerprint(ctx context.Context) (<-chan *drivers.Fingerprint, error) {
+func (d *BoundaryDriverPlugin) Fingerprint(ctx context.Context) (<-chan *drivers.Fingerprint, error) {
 	ch := make(chan *drivers.Fingerprint)
 	go d.handleFingerprint(ctx, ch)
 	return ch, nil
 }
 
 // handleFingerprint manages the channel and the flow of fingerprint data.
-func (d *HelloDriverPlugin) handleFingerprint(ctx context.Context, ch chan<- *drivers.Fingerprint) {
+func (d *BoundaryDriverPlugin) handleFingerprint(ctx context.Context, ch chan<- *drivers.Fingerprint) {
 	defer close(ch)
 
 	// Nomad expects the initial fingerprint to be sent immediately
@@ -371,7 +356,7 @@ func (d *HelloDriverPlugin) handleFingerprint(ctx context.Context, ch chan<- *dr
 }
 
 // buildFingerprint returns the driver's fingerprint data
-func (d *HelloDriverPlugin) buildFingerprint() *drivers.Fingerprint {
+func (d *BoundaryDriverPlugin) buildFingerprint() *drivers.Fingerprint {
 	fp := &drivers.Fingerprint{
 		Attributes:        map[string]*structs.Attribute{},
 		Health:            drivers.HealthStateHealthy,
@@ -420,7 +405,7 @@ func (d *HelloDriverPlugin) buildFingerprint() *drivers.Fingerprint {
 }
 
 // StartTask returns a task handle and a driver network if necessary.
-func (d *HelloDriverPlugin) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drivers.DriverNetwork, error) {
+func (d *BoundaryDriverPlugin) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drivers.DriverNetwork, error) {
 	if _, ok := d.tasks.Get(cfg.ID); ok {
 		return nil, nil, fmt.Errorf("task with ID %q already started", cfg.ID)
 	}
@@ -501,7 +486,7 @@ func (d *HelloDriverPlugin) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHan
 }
 
 // RecoverTask recreates the in-memory state of a task from a TaskHandle.
-func (d *HelloDriverPlugin) RecoverTask(handle *drivers.TaskHandle) error {
+func (d *BoundaryDriverPlugin) RecoverTask(handle *drivers.TaskHandle) error {
 	if handle == nil {
 		return errors.New("error: handle cannot be nil")
 	}
@@ -554,7 +539,7 @@ func (d *HelloDriverPlugin) RecoverTask(handle *drivers.TaskHandle) error {
 }
 
 // WaitTask returns a channel used to notify Nomad when a task exits.
-func (d *HelloDriverPlugin) WaitTask(ctx context.Context, taskID string) (<-chan *drivers.ExitResult, error) {
+func (d *BoundaryDriverPlugin) WaitTask(ctx context.Context, taskID string) (<-chan *drivers.ExitResult, error) {
 	handle, ok := d.tasks.Get(taskID)
 	if !ok {
 		return nil, drivers.ErrTaskNotFound
@@ -565,7 +550,7 @@ func (d *HelloDriverPlugin) WaitTask(ctx context.Context, taskID string) (<-chan
 	return ch, nil
 }
 
-func (d *HelloDriverPlugin) handleWait(ctx context.Context, handle *taskHandle, ch chan *drivers.ExitResult) {
+func (d *BoundaryDriverPlugin) handleWait(ctx context.Context, handle *taskHandle, ch chan *drivers.ExitResult) {
 	defer close(ch)
 	var result *drivers.ExitResult
 
@@ -603,7 +588,7 @@ func (d *HelloDriverPlugin) handleWait(ctx context.Context, handle *taskHandle, 
 }
 
 // StopTask stops a running task with the given signal and within the timeout window.
-func (d *HelloDriverPlugin) StopTask(taskID string, timeout time.Duration, signal string) error {
+func (d *BoundaryDriverPlugin) StopTask(taskID string, timeout time.Duration, signal string) error {
 	handle, ok := d.tasks.Get(taskID)
 	if !ok {
 		return drivers.ErrTaskNotFound
@@ -629,7 +614,7 @@ func (d *HelloDriverPlugin) StopTask(taskID string, timeout time.Duration, signa
 }
 
 // DestroyTask cleans up and removes a task that has terminated.
-func (d *HelloDriverPlugin) DestroyTask(taskID string, force bool) error {
+func (d *BoundaryDriverPlugin) DestroyTask(taskID string, force bool) error {
 	handle, ok := d.tasks.Get(taskID)
 	if !ok {
 		return drivers.ErrTaskNotFound
@@ -660,7 +645,7 @@ func (d *HelloDriverPlugin) DestroyTask(taskID string, force bool) error {
 }
 
 // InspectTask returns detailed status information for the referenced taskID.
-func (d *HelloDriverPlugin) InspectTask(taskID string) (*drivers.TaskStatus, error) {
+func (d *BoundaryDriverPlugin) InspectTask(taskID string) (*drivers.TaskStatus, error) {
 	handle, ok := d.tasks.Get(taskID)
 	if !ok {
 		return nil, drivers.ErrTaskNotFound
@@ -670,7 +655,7 @@ func (d *HelloDriverPlugin) InspectTask(taskID string) (*drivers.TaskStatus, err
 }
 
 // TaskStats returns a channel which the driver should send stats to at the given interval.
-func (d *HelloDriverPlugin) TaskStats(ctx context.Context, taskID string, interval time.Duration) (<-chan *drivers.TaskResourceUsage, error) {
+func (d *BoundaryDriverPlugin) TaskStats(ctx context.Context, taskID string, interval time.Duration) (<-chan *drivers.TaskResourceUsage, error) {
 	handle, ok := d.tasks.Get(taskID)
 	if !ok {
 		return nil, drivers.ErrTaskNotFound
@@ -688,13 +673,13 @@ func (d *HelloDriverPlugin) TaskStats(ctx context.Context, taskID string, interv
 }
 
 // TaskEvents returns a channel that the plugin can use to emit task related events.
-func (d *HelloDriverPlugin) TaskEvents(ctx context.Context) (<-chan *drivers.TaskEvent, error) {
+func (d *BoundaryDriverPlugin) TaskEvents(ctx context.Context) (<-chan *drivers.TaskEvent, error) {
 	return d.eventer.TaskEvents(ctx)
 }
 
 // SignalTask forwards a signal to a task.
 // This is an optional capability.
-func (d *HelloDriverPlugin) SignalTask(taskID string, signal string) error {
+func (d *BoundaryDriverPlugin) SignalTask(taskID string, signal string) error {
 	handle, ok := d.tasks.Get(taskID)
 	if !ok {
 		return drivers.ErrTaskNotFound
@@ -717,7 +702,7 @@ func (d *HelloDriverPlugin) SignalTask(taskID string, signal string) error {
 
 // ExecTask returns the result of executing the given command inside a task.
 // This is an optional capability.
-func (d *HelloDriverPlugin) ExecTask(taskID string, cmd []string, timeout time.Duration) (*drivers.ExecTaskResult, error) {
+func (d *BoundaryDriverPlugin) ExecTask(taskID string, cmd []string, timeout time.Duration) (*drivers.ExecTaskResult, error) {
 	// TODO: implement driver specific logic to execute commands in a task.
 	return nil, errors.New("This driver does not support exec")
 }
