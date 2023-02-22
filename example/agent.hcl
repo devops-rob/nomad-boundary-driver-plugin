@@ -8,5 +8,11 @@ plugin "boundary-driver-plugin" {
     org_id         = "o_1234567890"
     username       = "admin"
     password       = "password"
+
+    default_project = "p_1234567890"
+    default_groups  = [
+      "group1",
+      "group2"
+    ]
   }
 }
